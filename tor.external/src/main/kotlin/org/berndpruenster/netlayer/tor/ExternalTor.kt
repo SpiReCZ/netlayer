@@ -176,6 +176,22 @@ class ExternalTor : Tor {
             // disconnect from controlPort
         }
     }
+
+    @Throws(IllegalArgumentException::class)
+    override fun disconnect() {
+        synchronized(control) {
+            try {
+                if (activeHiddenServices.isNotEmpty()) {
+                    throw IllegalArgumentException(
+                        "Disconnecting from Tor is not possible, " +
+                                "active hidden services detected: ${activeHiddenServices.size}"
+                    )
+                }
+            } finally {
+                control.disconnect()
+            }
+        }
+    }
 }
 
 class ExternalTorSocket

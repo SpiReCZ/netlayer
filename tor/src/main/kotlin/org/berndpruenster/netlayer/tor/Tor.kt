@@ -37,7 +37,6 @@ package org.berndpruenster.netlayer.tor
 import com.runjva.sourceforge.jsocks.protocol.Socks5Proxy
 import mu.KLogger
 import mu.KotlinLogging
-import net.freehaven.tor.control.ConfigEntry
 import net.freehaven.tor.control.TorControlConnection
 import java.io.*
 import java.math.BigInteger
@@ -93,7 +92,7 @@ class TraceStream(logger : KLogger) : PrintWriter(Stream(logger), true) {
 
 }
 
-class TorController : TorControlConnection {
+open class TorController : TorControlConnection {
 
     val bootstrapped: Boolean
         get() = getInfo(STATUS_BOOTSTRAPPED)?.contains("PROGRESS=100") ?: false
@@ -119,6 +118,12 @@ class TorController : TorControlConnection {
         setConf(DISABLE_NETWORK, "0")
     }
 
+    fun disconnect() {
+        socket.use {
+            logger?.debug("Disconnecting from Tor")
+        }
+    }
+
 }
 
 class Control(private val con: TorController) {
@@ -141,6 +146,9 @@ class Control(private val con: TorController) {
         }
     }
 
+    fun disconnect(){
+        con.disconnect()
+    }
 
     private fun parsePort(): Int {
         // This returns a set of space delimited quoted strings which could be
@@ -304,4 +312,6 @@ abstract class Tor @Throws(TorCtlException::class) protected constructor() {
     fun isHiddenServiceAvailable(onionUrl: String): Boolean = control.hsAvailable(onionUrl)
 
     abstract fun shutdown()
+
+    protected abstract fun disconnect()
 }
