@@ -79,8 +79,8 @@ class Torrc @Throws(IOException::class) internal constructor(defaults: InputStre
     private val rc = LinkedHashMap<String, String>()
 
     init {
-        overrides?.forEach { rc.put(it.key, it.value.trim()) }
         parse(defaults)?.forEach { rc.put(it.key, it.value.trim()) }
+        overrides?.forEach { rc.put(it.key, it.value.trim()) }
     }
 
     internal val inputStream: InputStream
@@ -95,6 +95,8 @@ class Torrc @Throws(IOException::class) internal constructor(defaults: InputStre
             outputStream.bufferedWriter().use { it.newLine() }
             return ByteArrayInputStream(outputStream.toByteArray())
         }
+
+    internal val runAsDaemon = rc.getOrDefault("RunAsDaemon", "0").toBoolean()
 
     companion object {
         @Throws(IOException::class)
@@ -130,18 +132,25 @@ abstract class TorContext @Throws(IOException::class) protected constructor(val 
         private val EVENTS = listOf("CIRC", "WARN", "ERR")
 
         private fun parseBootstrap(inputStream: InputStream, latch: CountDownLatch, port: AtomicReference<Int>) {
-            Thread({
-                       Thread.currentThread().name = "NFO"
-                       BufferedReader(inputStream.reader()).use { reader ->
-                           reader.forEachLine {
-                               logger?.debug { it }
-                               if (it.contains("Control listener listening on port ")) {
-                                   port.set(Integer.parseInt(it.substring(it.lastIndexOf(" ") + 1, it.length - 1)))
-                                   latch.countDown()
-                               }
-                           }
-                       }
-                   }).start()
+            Thread {
+                Thread.currentThread().name = "NFO"
+                BufferedReader(inputStream.reader()).use { reader ->
+                    reader.forEachLine {
+                        logger?.debug { it }
+                        if (latch.count > 0L) {
+                            if (it.contains("Control listener listening on port ")) {
+                                // Automatic port
+                                port.set(Integer.parseInt(it.substring(it.lastIndexOf(" ") + 1, it.length - 1)))
+                                latch.countDown()
+                            } else if (it.contains("Opened Control listener connection")) {
+                                // Manual port
+                                port.set(Integer.parseInt(it.substring(it.lastIndexOf(":") + 1, it.length).trim()))
+                                latch.countDown()
+                            }
+                        }
+                    }
+                }
+            }.start()
         }
 
         private fun forwardErr(inputStream: InputStream) {
@@ -168,6 +177,7 @@ abstract class TorContext @Throws(IOException::class) protected constructor(val 
     internal val torrcFile = File(workingDirectory, FILE_TORRC)
     internal val torExecutableFile get() = File(workingDirectory, torExecutableFileName)
     internal val cookieFile = File(workingDirectory, FILE_AUTH_COOKIE)
+    private var runAsDaemon: Boolean = false
 
     @Throws(IOException::class)
     open fun installFiles() {
@@ -219,8 +229,11 @@ abstract class TorContext @Throws(IOException::class) protected constructor(val 
         getByName(FILE_TORRC).use { str ->
             Torrc(str, overrides).inputStream.use { rc ->
                 getByName(FILE_TORRC_DEFAULTS).use {
-                    Torrc(rc, it).inputStream.use {
-                        cleanInstallFile(it, torrcFile)
+                    runAsDaemon = with(Torrc(rc, it)) {
+                        this.inputStream.use {
+                            cleanInstallFile(it, torrcFile)
+                        }
+                        this.runAsDaemon
                     }
                 }
             }
@@ -347,7 +360,7 @@ abstract class TorContext @Throws(IOException::class) protected constructor(val 
             // This does create a condition where the process has exited due to
             // a problem but we should hopefully
             // detect that when we try to use the control connection.
-            if (OsType.current != OsType.WIN) {
+            if (OsType.current != OsType.WIN && runAsDaemon) {
                 val exit = torProcess.waitFor()
                 torProcess = null
                 if (exit != 0) {
